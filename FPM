@@ -1,0 +1,60 @@
+Optimize fpm and ngnix server.
+
+## Verify the process consuming all the CPU. 
+
+In my case, after running top, pid (3174) of top consuming CPU (user time was 11.8%us) was identified:
+
+top - 12:43:19 up  1:35,  2 users,  load average: 0.97, 1.05, 1.11
+Tasks: 265 total,   2 running, 263 sleeping,   0 stopped,   0 zombie
+Cpu(s): 11.8%us,  0.4%sy,  0.0%ni, 87.7%id,  0.0%wa,  0.0%hi,  0.0%si,  0.0%st
+Mem:  16333780k total, 11207464k used,  5126316k free,     6464k buffers
+Swap:  2097144k total,        0k used,  2097144k free, 10078524k cached
+
+  PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND
+ 3174 nginx     20   0  705m  49m  23m S 33.5  0.3   1:12.21 php-fpm
+ 3173 nginx     20   0  711m  56m  25m S 28.5  0.4   1:08.62 php-fpm
+ 3187 nginx     20   0  711m  49m  17m S 26.2  0.3   1:00.80 php-fpm
+ 3191 nginx     20   0  717m  59m  21m R  6.6  0.4   1:04.29 php-fpm
+The following command was run to identify the factor that was causing glitches:
+
+strace -ffttTo /tmp/strace.out -p 3174
+The file /tmp/strace.out.3174 was full of following lines
+
+12:55:17.417008 open("/var/log/php-fpm/www-error.log", O_WRONLY|O_CREAT|O_APPEND, 0644) = -1 EACCES (Permission denied) <0.000024>
+12:55:17.417120 write(2, "NOTICE: PHP message: PHP Depreca"..., 186) = 186 <0.000016>
+After running:
+
+chown -R nginx:root /var/log/php-fpm
+the problem was gone.
+
+
+## Another response: 
+Try using strace -p 26721 to see what the process is doing. To see which file handle is which use lsof -p 26721
+
+
+https://thisinterestsme.com/php-fpm-settings/
+https://community.centminmod.com/threads/cpu-pinned-at-100-for-hours.19733
+
+
+The behavior of PHP-FPM on my Server is the same as you. bottleneck somewhere for sure.
+The question turn out: How to find Bottleneck on Nginx - PHP-FPM - Mysql? The fastest way to find out is: Enable Slowlog for PHP-FPM.
+Add the lines below into your php-fpm.conf pool, and make sure the path is existed
+
+request_slowlog_timeout = 10
+slowlog = /var/log/php-fpm/slow.$pool.log
+
+
+
+
+You can use strace to show the scripts being run - and many other things - in real time. It's pretty verbose, but it can give you a good overall picture of what's going on:
+
+# switch php-fpm7.0 for process you're using
+sudo strace -f $(pidof php-fpm7.0 | sed 's/\([0-9]*\)/\-p \1/g')
+The above will attach to the forked processes of php fpm. Use -p to attach to a particular pid.
+
+The above would get the scrip path. To get the urls, you would look at your nginx / apache access logs.
+
+As a side note, to see the syscalls and which ones are taking longest:
+
+sudo strace -c -f $(pidof php-fpm7.0 | sed 's/\([0-9]*\)/\-p \1/g')
+Wait a while, then hit Ctr-C
